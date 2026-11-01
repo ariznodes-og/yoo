@@ -24,15 +24,15 @@ jobs:
 
       - name: Setup SSHX VPS
         run: |
-          # No apt-get needed! Curl is pre-installed on the runner.
+          # 1. Install sshx using the correct 'install' command
+          curl -sSf https://sshx.io/get | sh -s install
           
-          # Install and start sshx
-          curl -sSf https://sshx.io/get | sh -s -- -y
+          # 2. Start sshx in the background
           mkdir -p /tmp/sshx
           nohup sshx --shell bash > /tmp/sshx/sshx.log 2>&1 &
           echo $! > /tmp/sshx/sshx.pid
           
-          # Wait for link to generate
+          # 3. Wait for the connection link to generate
           echo "Waiting for sshx link..."
           for i in {1..30}; do
             if grep -q "https://sshx.io/s/" /tmp/sshx/sshx.log 2>/dev/null; then
@@ -41,6 +41,7 @@ jobs:
             sleep 2
           done
           
+          # 4. Extract and display the link
           SSHX_LINK=$(grep -o 'https://sshx.io/s/[A-Za-z0-9]\+' /tmp/sshx/sshx.log | head -n 1)
           echo "====================================="
           echo "YOUR VPS SSHX LINK IS:"
