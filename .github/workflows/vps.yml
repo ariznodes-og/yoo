@@ -15,6 +15,7 @@ concurrency:
 jobs:
   Build-VPS:
     runs-on: ubuntu-latest
+    timeout-minutes: 350 # GitHub max limit is 6 hours (360m). We use 350m for safety.
     steps:
       - name: Checkout Repo (Loading saved files)
         uses: actions/checkout@v4
@@ -22,59 +23,15 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Setup SSHX VPS
-        run: |
-          # 1. Install sshx using the correct 'install' command
-          curl -sSf https://sshx.io/get | sh -s install
-          
-          # 2. Start sshx in the background
-          mkdir -p /tmp/sshx
-          nohup sshx --shell bash > /tmp/sshx/sshx.log 2>&1 &
-          echo $! > /tmp/sshx/sshx.pid
-          
-          # 3. Wait for the connection link to generate
-          echo "Waiting for sshx link..."
-          for i in {1..30}; do
-            if grep -q "https://sshx.io/s/" /tmp/sshx/sshx.log 2>/dev/null; then
-              break
-            fi
-            sleep 2
-          done
-          
-          # 4. Extract and display the link
-          SSHX_LINK=$(grep -o 'https://sshx.io/s/[A-Za-z0-9]\+' /tmp/sshx/sshx.log | head -n 1)
-          echo "====================================="
-          echo "YOUR VPS SSHX LINK IS:"
-          echo "$SSHX_LINK"
-          echo "====================================="
-          echo "$SSHX_LINK" > /tmp/sshx/link.txt
-
-      - name: Display SSHX Link (Persistent)
-        run: |
-          if [ -f /tmp/sshx/link.txt ]; then
-            echo "🔗 SSHX Connection Link:"
-            cat /tmp/sshx/link.txt
-          fi
-
       - name: Configure Git for Auto-Backup
         run: |
           git config --global user.name "VPS Auto-Saver"
           git config --global user.email "vps@autosaver.com"
           git config --global pull.rebase true
-          BRANCH=$(git rev-parse --abbrev-ref HEAD)
-          if [ "$BRANCH" == "HEAD" ]; then
-            git checkout -b main
-          fi
 
-      - name: Initial Backup (Save any existing changes)
+      - name: Start SSHX VPS and Auto-Backup
         run: |
-          cd $GITHUB_WORKSPACE
-          git add -A
-          git commit -m "Initial VPS state at $(date -u)" || echo "Nothing to commit initially."
-          git push origin HEAD || echo "Initial push failed."
-
-      - name: Auto-Backup Loop (Saves files every 5 minutes)
-        run: |
+          # 1. Start the auto-backup loop in the background
           (
             while true; do
               sleep 300
@@ -85,21 +42,20 @@ jobs:
               git pull --rebase --autostash origin HEAD 2>/dev/null || true
               
               git add -A
-              if git diff --cached --quiet; then
-                echo "Nothing new to save."
-              else
+              if ! git diff --cached --quiet; then
                 git commit -m "Auto-backup of VPS files at $(date -u)"
-                if git push origin HEAD; then
-                  echo "✅ Backup pushed successfully."
-                else
-                  echo "⚠️ Push failed, will retry next cycle."
-                  git reset --soft HEAD~1 2>/dev/null || true
-                fi
+                git push origin HEAD || echo "Push failed, will retry next cycle."
               fi
             done
           ) &
 
-      - name: Keep Alive (Max 5h 50m)
-        run: |
-          echo "VPS is running via sshx. Sleeping to keep it alive..."
-          sleep 350m
+          # 2. Install and run SSHX in the FOREGROUND
+          # This keeps the step alive and prevents GitHub from killing the connection
+          curl -sSf https://sshx.io/get | sh -s install
+          
+          echo "====================================="
+          echo "STARTING SSHX VPS..."
+          echo "YOUR SSHX LINK WILL APPEAR BELOW SHORTLY:"
+          echo "====================================="
+          
+          sshx
