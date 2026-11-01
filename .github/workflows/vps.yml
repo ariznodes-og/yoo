@@ -1,0 +1,110 @@
+name: Phase 1 Leapfrog VPS
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */6 * * *'
+
+permissions:
+  contents: write
+
+jobs:
+  Build-VPS:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repo (Loading saved files)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup SSHX VPS
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl tar
+          
+          # Install sshx
+          curl -sSf https://sshx.io/get | sh -s -- -y
+          
+          # Start sshx in the background
+          mkdir -p /tmp/sshx
+          nohup sshx --shell bash > /tmp/sshx/sshx.log 2>&1 &
+          echo $! > /tmp/sshx/sshx.pid
+          
+          # Wait for sshx to generate link
+          echo "Waiting for sshx link to generate..."
+          for i in {1..30}; do
+            if grep -q "https://sshx.io/s/" /tmp/sshx/sshx.log 2>/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          
+          SSHX_LINK=$(grep -o 'https://sshx.io/s/[A-Za-z0-9]\+' /tmp/sshx/sshx.log | head -n 1)
+          
+          echo "====================================="
+          echo "YOUR VPS SSHX LINK IS:"
+          echo "$SSHX_LINK"
+          echo "====================================="
+          echo "Open the link in your browser to connect."
+          echo "Save your files in $GITHUB_WORKSPACE to persist them forever!"
+          
+          # Save the link so it can be displayed again
+          echo "$SSHX_LINK" > /tmp/sshx/link.txt
+
+      - name: Display SSHX Link (Persistent)
+        run: |
+          if [ -f /tmp/sshx/link.txt ]; then
+            echo "🔗 SSHX Connection Link:"
+            cat /tmp/sshx/link.txt
+          fi
+
+      - name: Configure Git for Auto-Backup
+        run: |
+          git config --global user.name "VPS Auto-Saver"
+          git config --global user.email "vps@autosaver.com"
+          git config --global pull.rebase true
+          
+          # Ensure we're on a branch
+          BRANCH=$(git rev-parse --abbrev-ref HEAD)
+          if [ "$BRANCH" == "HEAD" ]; then
+            git checkout -b main
+          fi
+
+      - name: Initial Backup (Save any existing changes)
+        run: |
+          cd $GITHUB_WORKSPACE
+          git add -A
+          git commit -m "Initial VPS state at $(date -u)" || echo "Nothing to commit initially."
+          git push origin HEAD || echo "Initial push failed."
+
+      - name: Auto-Backup Loop (Saves files every 5 minutes)
+        run: |
+          (
+            while true; do
+              sleep 300
+              cd $GITHUB_WORKSPACE
+              echo "=== Auto-backup at $(date -u) ==="
+              
+              # Pull any remote changes first to avoid conflicts
+              git pull --rebase --autostash origin HEAD 2>/dev/null || true
+              
+              git add -A
+              if git diff --cached --quiet; then
+                echo "Nothing new to save."
+              else
+                git commit -m "Auto-backup of VPS files at $(date -u)"
+                if git push origin HEAD; then
+                  echo "✅ Backup pushed successfully."
+                else
+                  echo "⚠️ Push failed, will retry next cycle."
+                  git reset --soft HEAD~1 2>/dev/null || true
+                fi
+              fi
+            done
+          ) &
+
+      - name: Keep Alive (Max 5h 50m)
+        run: |
+          echo "VPS is running via sshx. Sleeping to keep it alive..."
+          sleep 350m
