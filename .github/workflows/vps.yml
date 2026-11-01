@@ -24,9 +24,7 @@ jobs:
 
       - name: Setup SSHX VPS
         run: |
-          # Fix: use only -y, do not add extra flags
-          sudo apt-get update
-          sudo apt-get install -y curl tar
+          # No apt-get needed! Curl is pre-installed on the runner.
           
           # Install and start sshx
           curl -sSf https://sshx.io/get | sh -s -- -y
@@ -82,7 +80,7 @@ jobs:
               cd $GITHUB_WORKSPACE
               echo "=== Auto-backup at $(date -u) ==="
               
-              # First pull remote changes to avoid conflicts
+              # Pull remote changes first to avoid conflicts
               git pull --rebase --autostash origin HEAD 2>/dev/null || true
               
               git add -A
