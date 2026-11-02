@@ -15,47 +15,53 @@ concurrency:
 jobs:
   Build-VPS:
     runs-on: ubuntu-latest
-    timeout-minutes: 350 # GitHub max limit is 6 hours (360m). We use 350m for safety.
+    timeout-minutes: 350
     steps:
-      - name: Checkout Repo (Loading saved files)
+      - name: Checkout Repo (Explicitly on your branch)
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.ref_name }} # <--- This forces it to use main/master
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Configure Git for Auto-Backup
+      - name: Configure Git
         run: |
           git config --global user.name "VPS Auto-Saver"
           git config --global user.email "vps@autosaver.com"
           git config --global pull.rebase true
+          git config --global --add safe.directory $GITHUB_WORKSPACE
 
-      - name: Start SSHX VPS and Auto-Backup
+      - name: Start SSHX VPS and Bulletproof Auto-Backup
         run: |
           # 1. Start the auto-backup loop in the background
           (
             while true; do
-              sleep 300
+              sleep 300 # Saves every 5 minutes
               cd $GITHUB_WORKSPACE
-              echo "=== Auto-backup at $(date -u) ==="
               
-              # Pull remote changes first to avoid conflicts
-              git pull --rebase --autostash origin HEAD 2>/dev/null || true
+              # Pull the latest changes from your exact branch
+              git pull origin ${{ github.ref_name }} || true
               
               git add -A
               if ! git diff --cached --quiet; then
-                git commit -m "Auto-backup of VPS files at $(date -u)"
-                git push origin HEAD || echo "Push failed, will retry next cycle."
+                git commit -m "Auto-backup at $(date -u)"
+                
+                # FORCE PUSH to your actual branch name
+                if git push origin HEAD:${{ github.ref_name }}; then
+                  echo "✅ Backup successfully pushed to ${{ github.ref_name }}!"
+                else
+                  echo "⚠️ Push failed, retrying next cycle."
+                fi
               fi
             done
           ) &
 
           # 2. Install and run SSHX in the FOREGROUND
-          # This keeps the step alive and prevents GitHub from killing the connection
           curl -sSf https://sshx.io/get | sh -s install
           
           echo "====================================="
           echo "STARTING SSHX VPS..."
-          echo "YOUR SSHX LINK WILL APPEAR BELOW SHORTLY:"
+          echo "YOUR SSHX LINK WILL APPEAR BELOW:"
           echo "====================================="
           
           sshx
